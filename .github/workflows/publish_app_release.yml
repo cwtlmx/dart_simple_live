@@ -21,6 +21,9 @@ permissions:
 jobs:
   build-android:
     runs-on: ubuntu-latest
+    concurrency:
+      group: build-app-${{ github.ref }}
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
 
@@ -94,6 +97,21 @@ jobs:
           echo "version=$RAW" >> $GITHUB_OUTPUT
           echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
           echo "版本: $RAW"
+
+      # --- 清理旧 Release：只删自己的 app_* 前缀，保留最新 3 个 ---
+      - name: Prune stale APP releases
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.TOKEN }}
+        run: |
+          gh release list --limit 100 --json tagName,createdAt \
+            --jq 'map(select(.tagName | startswith("app_"))) | sort_by(.createdAt) | reverse | .[3:] | .[].tagName' \
+          | while read -r tag; do
+              [ -z "$tag" ] && continue
+              echo "删除旧 APP Release: $tag"
+              gh release delete "$tag" --yes --cleanup-tag || true
+            done
 
       - name: Upload APK to Artifacts
         uses: actions/upload-artifact@v4

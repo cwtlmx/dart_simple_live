@@ -17,8 +17,12 @@ on:
       - "assets/**"
 
 jobs:
+  # 同一分支/标签只保留最新一次构建，避免重复排队
   build-tv:
     runs-on: ubuntu-latest
+    concurrency:
+      group: build-tv-${{ github.ref }}
+      cancel-in-progress: true
     permissions:
       contents: write
     steps:
@@ -107,8 +111,8 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "tv_v${{ steps.ver.outputs.version }}.${{ github.run_number }}"
-          name: "TV ${{ steps.ver.outputs.version }} (build ${{ github.run_number }})"
+          tag_name: "tv_v${{ steps.ver.outputs.version }}"
+          name: "TV ${{ steps.ver.outputs.version }}"
           body: |
             自动构建 · 上游提交 `${{ steps.ver.outputs.sha }}`
 
@@ -124,18 +128,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.TOKEN }}
 
-      # --- 清理旧 Release：同名 tag 只保留最新，删掉历史遗留的 run_number 版 ---
-      - name: Prune stale releases
+      # --- 清理旧 Release：只删自己的 tv_* 前缀，保留最新 3 个 ---
+      - name: Prune stale TV releases
         if: always()
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.TOKEN }}
         run: |
-          # 保留最新 3 个 Release，其余删除（含 tag）
           gh release list --limit 100 --json tagName,createdAt \
-            --jq 'sort_by(.createdAt) | reverse | .[3:] | .[].tagName' \
+            --jq 'map(select(.tagName | startswith("tv_"))) | sort_by(.createdAt) | reverse | .[3:] | .[].tagName' \
           | while read -r tag; do
               [ -z "$tag" ] && continue
-              echo "删除旧 Release: $tag"
+              echo "删除旧 TV Release: $tag"
               gh release delete "$tag" --yes --cleanup-tag || true
             done
