@@ -67,6 +67,12 @@ jobs:
           echo "--- AGP ---"; grep 'com.android.application' settings.gradle.kts
           echo "--- Kotlin ---"; grep 'jetbrains.kotlin.android' settings.gradle.kts
 
+      # --- 统一所有子项目(含插件) JVM target = 17 ---
+      #     插件硬编码 1.8/11/17，与 Kotlin 17 不一致会在随机插件上轮流报
+      #     "Inconsistent JVM Target Compatibility Between Java and Kotlin Tasks"
+      - name: Unify JVM target to 17
+        run: python3 .ci/patch_jvm_target.py . simple_live_tv_app
+
       - name: Restore packages
         run: |
           cd simple_live_tv_app

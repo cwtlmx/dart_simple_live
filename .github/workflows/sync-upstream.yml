@@ -1,6 +1,11 @@
 name: sync-upstream
 
-# 上游更新 → 自动同步到本 fork 的 master
+# 上游更新 → 自动同步到本 fork 的 master → 自动触发打包
+#
+# 策略：
+#   - 上游的代码变更【全部采纳】
+#   - 我们自己的定制（workflow + .ci 构建脚本）【原样保留】
+#   - 同步后 push 到 master，push 事件自动触发 build-app / build-tv
 on:
   schedule:
     # 每 6 小时检查一次上游
@@ -9,6 +14,10 @@ on:
 
 permissions:
   contents: write
+
+env:
+  UPSTREAM_REPO: xiaoyaocz/dart_simple_live
+  UPSTREAM_BRANCH: master
 
 jobs:
   sync:
@@ -20,18 +29,17 @@ jobs:
           ref: master
           fetch-depth: 0
 
-      - name: Add upstream & fetch
+      - name: Fetch upstream
         run: |
-          git remote add upstream https://github.com/xiaoyaocz/dart_simple_live.git 2>/dev/null || true
-          git fetch upstream master
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git" 2>/dev/null || true
+          git fetch upstream "${UPSTREAM_BRANCH}" --depth=1
           git fetch origin master
 
       - name: Check for new commits
         id: check
         run: |
-          git fetch upstream master --depth=1
           LOCAL=$(git rev-parse origin/master)
-          UPSTREAM=$(git rev-parse upstream/master)
+          UPSTREAM=$(git rev-parse FETCH_HEAD)
           echo "local   =$LOCAL"
           echo "upstream=$UPSTREAM"
           if [ "$LOCAL" = "$UPSTREAM" ]; then
@@ -42,41 +50,37 @@ jobs:
             echo "🔔 上游有更新，开始同步"
           fi
 
-      - name: Backup customized workflows
+      # 先把我们的定制文件存到 workspace 外，merge 之后再覆盖回来
+      - name: Snapshot our customizations
         if: steps.check.outputs.changed == 'true'
         run: |
-          mkdir -p /tmp/keep
-          cp .github/workflows/publish_app_release.yml   /tmp/keep/ 2>/dev/null || true
-          cp .github/workflows/publish_tv_app_release.yaml /tmp/keep/ 2>/dev/null || true
-          cp .github/workflows/sync-upstream.yml         /tmp/keep/ 2>/dev/null || true
-          ls -la /tmp/keep/
+          mkdir -p /tmp/custom
+          tar cf /tmp/custom/custom.tar .github/workflows .ci 2>/dev/null || true
+          tar tf /tmp/custom/custom.tar
 
-      - name: Merge upstream
+      - name: Merge upstream code
         if: steps.check.outputs.changed == 'true'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout master
-          # 用 upstream 内容为准合并（我们的改动只在 workflow 文件）
-          git merge upstream/master --no-edit -X ours || {
-            echo "⚠️ merge 有冲突，采用 upstream 优先";
+          git checkout -B master origin/master
+          git merge "FETCH_HEAD" --no-edit -m "sync upstream ${UPSTREAM_REPO}@${UPSTREAM_BRANCH}" -X theirs || {
+            echo "⚠️ merge 冲突，采用 upstream 优先"
             git checkout --theirs -- . 2>/dev/null || true
             git add -A
-            git commit --no-edit || true
+            git commit --no-edit -m "sync upstream (resolved: upstream wins)"
           }
 
-      - name: Restore customized workflows
+      - name: Restore our customizations
         if: steps.check.outputs.changed == 'true'
         run: |
-          mkdir -p .github/workflows
-          cp /tmp/keep/publish_app_release.yml     .github/workflows/ 2>/dev/null || true
-          cp /tmp/keep/publish_tv_app_release.yaml .github/workflows/ 2>/dev/null || true
-          cp /tmp/keep/sync-upstream.yml           .github/workflows/ 2>/dev/null || true
+          rm -rf .github/workflows .ci
+          tar xf /tmp/custom/custom.tar -C .
           git add -A
           if git diff --cached --quiet; then
-            echo "workflow 已一致，无需额外提交"
+            echo "定制文件无需额外提交"
           else
-            git commit -m "chore: 恢复自定义 workflow 触发器"
+            git commit -m "chore: 恢复自定义 workflow 与 .ci"
           fi
 
       - name: Push to fork
@@ -86,8 +90,13 @@ jobs:
       - name: Summary
         run: |
           if [ "${{ steps.check.outputs.changed }}" = "true" ]; then
-            echo "## ✅ 已同步上游更新" >> $GITHUB_STEP_SUMMARY
-            echo "push 事件将自动触发打包 workflow。" >> $GITHUB_STEP_SUMMARY
+            {
+              echo "## ✅ 已同步上游更新"
+              echo ""
+              echo "push 到 master 会自动触发打包："
+              echo "- \`build-app\` → APP APK"
+              echo "- \`build-tv\` → TV APK"
+            } >> $GITHUB_STEP_SUMMARY
           else
             echo "## ℹ️ 上游无更新" >> $GITHUB_STEP_SUMMARY
           fi

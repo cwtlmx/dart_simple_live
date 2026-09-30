@@ -12,41 +12,35 @@ on:
     tags:
       - "v*"
     paths-ignore:
-      - "**.md"
-      - "assets/**"
-      - ".github/workflows/sync-upstream.yml"
+      - ".github/**"
+      - "README*"
+      - "*.md"
+
+permissions:
+  contents: write
 
 jobs:
   build-android:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: master
 
-      # --- 签名配置 ---
-      - name: Download Android keystore
-        id: android_keystore
-        uses: timheuer/base64-to-file@v1.2
-        with:
-          fileName: keystore.jks
-          encodedString: ${{ secrets.KEYSTORE_BASE64 }}
-
-      - name: Create key.properties
-        run: |
-          echo "storeFile=${{ steps.android_keystore.outputs.filePath }}" > simple_live_app/android/key.properties
-          echo "storePassword=${{ secrets.STORE_PASSWORD }}" >> simple_live_app/android/key.properties
-          echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> simple_live_app/android/key.properties
-          echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> simple_live_app/android/key.properties
-
-      # --- 环境 ---
-      - uses: actions/setup-java@v4
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
           distribution: "zulu"
           java-version: "17"
-          cache: "gradle"
+          cache: gradle
+
+      - name: Restore keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > simple_live_app/android/keystore.jks
+          cat > simple_live_app/android/key.properties <<EOF
+          storeFile=keystore.jks
+          storePassword=${{ secrets.STORE_PASSWORD }}
+          keyPassword=${{ secrets.KEY_PASSWORD }}
+          keyAlias=${{ secrets.KEY_ALIAS }}
+          EOF
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -55,7 +49,7 @@ jobs:
           cache: true
 
       # --- 构建前升级构建链依赖（Flutter 3.47 的最低要求）---
-      #     项目自带 Gradle 8.12 / AGP 8.9.1 均低于 Flutter 3.47 要求的 8.14 / 8.11.1
+      #     项目自带 Gradle 8.12 / AGP 8.9.1 / Kotlin 2.1.0 均低于 Flutter 3.47 要求
       #     这里在构建时就地升级，不改动仓库文件，上游同步不会冲突
       - name: Bump Gradle / AGP / Kotlin to Flutter 3.47 requirements
         run: |
@@ -67,12 +61,18 @@ jobs:
           echo "--- AGP ---"; grep 'com.android.application' settings.gradle.kts
           echo "--- Kotlin ---"; grep 'jetbrains.kotlin.android' settings.gradle.kts
 
+      # --- 统一所有子项目(含插件) JVM target = 17 ---
+      #     插件硬编码 1.8/11/17，与 Kotlin 17 不一致会在随机插件上轮流报
+      #     "Inconsistent JVM Target Compatibility Between Java and Kotlin Tasks"
+      - name: Unify JVM target to 17
+        run: python3 .ci/patch_jvm_target.py . simple_live_app
+
       - name: Restore packages
         run: |
           cd simple_live_app
           flutter pub get
 
-      # --- 打包（分 ABI，与原 workfflow 一致）---
+      # --- 打包（分 ABI，与原 workflow 一致）---
       - name: Build APK
         run: |
           cd simple_live_app
@@ -81,38 +81,19 @@ jobs:
       - name: Upload APK to Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: android-apk
-          path: |
-            simple_live_app/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
-            simple_live_app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-            simple_live_app/build/app/outputs/flutter-apk/app-x86_64-release.apk
+          name: app-release-apk
+          path: simple_live_app/build/app/outputs/flutter-apk/*.apk
 
-      # --- 读取版本号（pubspec 形如 1.11.4+11104）---
-      - name: Read version
-        id: ver
-        run: |
-          cd simple_live_app
-          RAW=$(grep -oP '^version:\s*\K[0-9.]+' pubspec.yaml | head -1)
-          echo "version=$RAW" >> $GITHUB_OUTPUT
-          echo "版本: $RAW"
-          echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-
-      # --- 自动发 Release ---
       - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "v${{ steps.ver.outputs.version }}.${{ github.run_number }}"
-          name: "APP ${{ steps.ver.outputs.version }} (build ${{ github.run_number }})"
+          tag_name: app-${{ github.run_number }}
+          name: "Simple Live APP ${{ github.run_number }}"
           body: |
-            自动构建 · 上游提交 `${{ steps.ver.outputs.sha }}`
-
-            - 分 ABI 的 APK（arm64-v8a / armeabi-v7a / x86_64）
-            - 签名与之前一致，可直接覆盖安装
-          files: |
-            simple_live_app/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
-            simple_live_app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-            simple_live_app/build/app/outputs/flutter-apk/app-x86_64-release.apk
+            自动构建自上游 master（run #${{ github.run_number }}）
+            commit: ${{ github.sha }}
+          files: simple_live_app/build/app/outputs/flutter-apk/*.apk
           token: ${{ secrets.TOKEN }}
+          draft: false
           prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.TOKEN }}
