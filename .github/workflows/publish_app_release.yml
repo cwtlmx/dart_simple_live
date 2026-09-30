@@ -57,13 +57,15 @@ jobs:
       # --- 构建前升级构建链依赖（Flutter 3.47 的最低要求）---
       #     项目自带 Gradle 8.12 / AGP 8.9.1 均低于 Flutter 3.47 要求的 8.14 / 8.11.1
       #     这里在构建时就地升级，不改动仓库文件，上游同步不会冲突
-      - name: Bump Gradle & AGP to Flutter 3.47 requirements
+      - name: Bump Gradle / AGP / Kotlin to Flutter 3.47 requirements
         run: |
           cd simple_live_app/android
           sed -i 's|gradle-8\.12-all\.zip|gradle-8.14.3-all.zip|' gradle/wrapper/gradle-wrapper.properties
           sed -i 's|id("com.android.application") version "8.9.1"|id("com.android.application") version "8.11.1"|' settings.gradle.kts
+          sed -i 's|id("org.jetbrains.kotlin.android") version "2.1.0"|id("org.jetbrains.kotlin.android") version "2.2.20"|' settings.gradle.kts
           echo "--- gradle wrapper ---"; grep distributionUrl gradle/wrapper/gradle-wrapper.properties
           echo "--- AGP ---"; grep 'com.android.application' settings.gradle.kts
+          echo "--- Kotlin ---"; grep 'jetbrains.kotlin.android' settings.gradle.kts
 
       - name: Restore packages
         run: |
