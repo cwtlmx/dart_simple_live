@@ -120,5 +120,22 @@ jobs:
             simple_live_tv_app/build/app/outputs/flutter-apk/app-x86_64-release.apk
           token: ${{ secrets.TOKEN }}
           prerelease: false
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.TOKEN }}
+
+      # --- 清理旧 Release：同名 tag 只保留最新，删掉历史遗留的 run_number 版 ---
+      - name: Prune stale releases
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.TOKEN }}
+        run: |
+          # 保留最新 3 个 Release，其余删除（含 tag）
+          gh release list --limit 100 --json tagName,createdAt \
+            --jq 'sort_by(.createdAt) | reverse | .[3:] | .[].tagName' \
+          | while read -r tag; do
+              [ -z "$tag" ] && continue
+              echo "删除旧 Release: $tag"
+              gh release delete "$tag" --yes --cleanup-tag || true
+            done

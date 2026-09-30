@@ -85,22 +85,34 @@ jobs:
           cd simple_live_app
           flutter build apk --release --split-per-abi
 
+      # --- 读取版本号（pubspec 形如 1.11.4+11104）---
+      - name: Read version
+        id: ver
+        run: |
+          cd simple_live_app
+          RAW=$(grep -oP '^version:\s*\K[0-9.]+' pubspec.yaml | head -1)
+          echo "version=$RAW" >> $GITHUB_OUTPUT
+          echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "版本: $RAW"
+
       - name: Upload APK to Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: app-release-apk
           path: simple_live_app/build/app/outputs/flutter-apk/*.apk
 
+      # --- 自动发 Release（tag 用版本号，重复运行会覆盖同一 tag 的产物）---
       - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: app-${{ github.run_number }}
-          name: "Simple Live APP ${{ github.run_number }}"
+          tag_name: "app_v${{ steps.ver.outputs.version }}"
+          name: "APP ${{ steps.ver.outputs.version }}"
           body: |
-            自动构建自上游 master（run #${{ github.run_number }}）
-            commit: ${{ github.sha }}
+            自动构建 · 上游提交 `${{ steps.ver.outputs.sha }}`
+
+            - 分 ABI 的 Android 手机 APK
+            - 签名与之前一致，可直接覆盖安装
           files: simple_live_app/build/app/outputs/flutter-apk/*.apk
           token: ${{ secrets.TOKEN }}
-          draft: false
           prerelease: false
+          make_latest: true
