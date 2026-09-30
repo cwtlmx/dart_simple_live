@@ -1,0 +1,93 @@
+name: sync-upstream
+
+# 上游更新 → 自动同步到本 fork 的 master
+on:
+  schedule:
+    # 每 6 小时检查一次上游
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Add upstream & fetch
+        run: |
+          git remote add upstream https://github.com/xiaoyaocz/dart_simple_live.git 2>/dev/null || true
+          git fetch upstream master
+          git fetch origin master
+
+      - name: Check for new commits
+        id: check
+        run: |
+          git fetch upstream master --depth=1
+          LOCAL=$(git rev-parse origin/master)
+          UPSTREAM=$(git rev-parse upstream/master)
+          echo "local   =$LOCAL"
+          echo "upstream=$UPSTREAM"
+          if [ "$LOCAL" = "$UPSTREAM" ]; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "✅ 上游无更新"
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "🔔 上游有更新，开始同步"
+          fi
+
+      - name: Backup customized workflows
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          mkdir -p /tmp/keep
+          cp .github/workflows/publish_app_release.yml   /tmp/keep/ 2>/dev/null || true
+          cp .github/workflows/publish_tv_app_release.yaml /tmp/keep/ 2>/dev/null || true
+          cp .github/workflows/sync-upstream.yml         /tmp/keep/ 2>/dev/null || true
+          ls -la /tmp/keep/
+
+      - name: Merge upstream
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout master
+          # 用 upstream 内容为准合并（我们的改动只在 workflow 文件）
+          git merge upstream/master --no-edit -X ours || {
+            echo "⚠️ merge 有冲突，采用 upstream 优先";
+            git checkout --theirs -- . 2>/dev/null || true
+            git add -A
+            git commit --no-edit || true
+          }
+
+      - name: Restore customized workflows
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          mkdir -p .github/workflows
+          cp /tmp/keep/publish_app_release.yml     .github/workflows/ 2>/dev/null || true
+          cp /tmp/keep/publish_tv_app_release.yaml .github/workflows/ 2>/dev/null || true
+          cp /tmp/keep/sync-upstream.yml           .github/workflows/ 2>/dev/null || true
+          git add -A
+          if git diff --cached --quiet; then
+            echo "workflow 已一致，无需额外提交"
+          else
+            git commit -m "chore: 恢复自定义 workflow 触发器"
+          fi
+
+      - name: Push to fork
+        if: steps.check.outputs.changed == 'true'
+        run: git push origin master
+
+      - name: Summary
+        run: |
+          if [ "${{ steps.check.outputs.changed }}" = "true" ]; then
+            echo "## ✅ 已同步上游更新" >> $GITHUB_STEP_SUMMARY
+            echo "push 事件将自动触发打包 workflow。" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ℹ️ 上游无更新" >> $GITHUB_STEP_SUMMARY
+          fi
