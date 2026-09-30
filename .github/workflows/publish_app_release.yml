@@ -54,6 +54,13 @@ jobs:
           flutter-version: "3.47.5"
           cache: true
 
+      # --- 项目自带 Gradle 8.12 < Flutter 3.47 要求的最低 8.14，构建前升级 ---
+      - name: Bump Gradle wrapper to 8.14.3
+        run: |
+          sed -i 's|gradle-8\.12-all\.zip|gradle-8.14.3-all.zip|' \
+            simple_live_app/android/gradle/wrapper/gradle-wrapper.properties
+          grep distributionUrl simple_live_app/android/gradle/wrapper/gradle-wrapper.properties
+
       - name: Restore packages
         run: |
           cd simple_live_app
