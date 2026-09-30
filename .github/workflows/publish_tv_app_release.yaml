@@ -12,9 +12,9 @@ on:
     tags:
       - "tv_*"
     paths-ignore:
-      - "**.md"
+      - "README*"
+      - "*.md"
       - "assets/**"
-      - ".github/workflows/sync-upstream.yml"
 
 jobs:
   build-tv:
