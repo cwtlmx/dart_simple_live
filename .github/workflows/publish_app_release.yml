@@ -32,15 +32,23 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - name: Restore keystore
+      # --- APP 签名配置 ---
+      #     Gradle 里 storeFile 是相对 android/app/ 解析的（file(it)），
+      #     所以必须写绝对路径，否则报 "Keystore file ... not found"
+      - name: Download APP keystore
+        id: app_keystore
+        uses: timheuer/base64-to-file@v1.2
+        with:
+          fileName: keystore.jks
+          encodedString: ${{ secrets.KEYSTORE_BASE64 }}
+
+      - name: Create APP key.properties
         run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > simple_live_app/android/keystore.jks
-          cat > simple_live_app/android/key.properties <<EOF
-          storeFile=keystore.jks
-          storePassword=${{ secrets.STORE_PASSWORD }}
-          keyPassword=${{ secrets.KEY_PASSWORD }}
-          keyAlias=${{ secrets.KEY_ALIAS }}
-          EOF
+          echo "storeFile=${{ steps.app_keystore.outputs.filePath }}" > simple_live_app/android/key.properties
+          echo "storePassword=${{ secrets.STORE_PASSWORD }}" >> simple_live_app/android/key.properties
+          echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> simple_live_app/android/key.properties
+          echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> simple_live_app/android/key.properties
+          echo "--- key.properties ---"; sed 's/Password=.*/Password=***/' simple_live_app/android/key.properties
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
